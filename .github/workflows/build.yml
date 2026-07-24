@@ -79,6 +79,9 @@ jobs:
           cp diffconfig openwrt/.config
           cd openwrt
           make defconfig
+          echo "Config that will be used during build:"
+          echo "======================================"
+          cat .config
       
       - name: Download sources
         run: |
