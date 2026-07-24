@@ -1,0 +1,117 @@
+name: Build OpenWrt
+
+on:
+  workflow_dispatch:
+    inputs:
+        openwrt_version:
+            description: "OpenWrt version tag"
+            required: false
+            type: string
+            default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Select OpenWrt release
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.openwrt_version }}
+        run: |
+            if [ -n "$REQUESTED_VERSION" ]; then
+                VERSION="$REQUESTED_VERSION"
+            else
+                VERSION="$(
+                git ls-remote --tags https://github.com/openwrt/openwrt.git \
+                    | awk -F/ '/refs\/tags\/v[0-9]+\.[0-9]+\.[0-9]+$/ { print $3 }' \
+                    | sort -V \
+                    | tail -n1
+                )"
+            fi
+
+            if ! git ls-remote --exit-code --tags \
+                https://github.com/openwrt/openwrt.git \
+                "refs/tags/$VERSION" >/dev/null; then
+                echo "Tag not found: $VERSION"
+                exit 1
+            fi
+
+            RELEASE_VERSION="${VERSION#v}"
+
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+            echo "Building OpenWrt: $VERSION"
+    
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+          bzip2 g++ gawk gcc \
+          git glibc-source \
+          libncurses-dev make
+
+      - name: Clone OpenWrt
+        run: |
+          git clone https://github.com/openwrt/openwrt.git
+          cd openwrt
+          git checkout "${{ steps.version.outputs.version }}"
+
+      - name: Update feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Apply diffconfig
+        run: |
+          cp diffconfig openwrt/.config
+          cd openwrt
+          make defconfig
+      
+      - name: Download sources
+        run: |
+          cd openwrt
+          make download -j$(($(nproc) + 1))
+
+      - name: Build firmware
+        run: |
+          cd openwrt
+          make -j$(($(nproc) + 1))
+
+      - name: Collect firmware
+        run: |
+          mkdir release
+
+          # Add config used during build to release
+          cp openwrt/.config release/config-${{ steps.version.outputs.version }}
+
+          find openwrt/bin/targets \
+            -type f \
+            \( \
+              -name "*.bin" -o \
+              -name "*.img.gz" -o \
+              -name "*.itb" -o \
+              -name "*.tar" \
+              -name "*.tar.zst" \
+            \) \
+            -exec cp {} release/ \;
+
+          find openwrt \
+            -type f \
+            -name '*imagebuilder*.tar.zst' \
+            -exec cp {} release/ \;
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: OpenWrt ${{ steps.version.outputs.version }}
+          files: release/*
+          generate_release_notes: true
