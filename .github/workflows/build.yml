@@ -66,7 +66,7 @@ jobs:
       - name: Apply patches
         run: |
           cd openwrt
-          git am ../patches/*.patch
+          git apply ../patches/*.patch
 
       - name: Update feeds
         run: |
