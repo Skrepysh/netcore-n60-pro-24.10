@@ -1,0 +1,1 @@
+# netcore-n60-pro-24.10
